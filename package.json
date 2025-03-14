@@ -1,7 +1,7 @@
 {
   "name": "free-nav",
   "displayName": "Free Nav",
-  "description": "free nav",
+  "description": "VSCode侧边栏Hello World示例",
   "publisher": "wcc007",
   "version": "0.0.1",
   "engines": {
@@ -41,36 +41,21 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
-    "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
+    "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "watch:esbuild": "node esbuild.js --watch",
-    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
-    "check-types": "tsc --noEmit",
-    "lint": "eslint src",
-    "test": "vscode-test",
-    "build": "node esbuild.js"
+    "package": "vsce package",
+    "postinstall": "cd node_modules/@xyflow/react && npm install --no-save"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
     "@types/node": "^16.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
     "@types/vscode": "^1.80.0",
-    "@typescript-eslint/eslint-plugin": "^8.25.0",
-    "@typescript-eslint/parser": "^8.25.0",
-    "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1",
     "esbuild": "^0.18.0",
-    "eslint": "^9.21.0",
-    "npm-run-all": "^4.1.5",
     "typescript": "^5.1.0"
   },
   "dependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
+    "@xyflow/react": "^12.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   }
