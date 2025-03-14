@@ -41,7 +41,7 @@ class FreeNavViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
     // 处理来自webview的消息
-    webviewView.webview.onDidReceiveMessage(
+    const messageListener = webviewView.webview.onDidReceiveMessage(
       async (message) => {
         switch (message.command) {
           case 'getWorkspaceFiles':
@@ -53,16 +53,52 @@ class FreeNavViewProvider implements vscode.WebviewViewProvider {
               await vscode.window.showTextDocument(document);
             }
             return;
+          case 'getThemeColors':
+            this._sendThemeColors(webviewView.webview);
+            return;
         }
-      },
-      undefined,
-      vscode.Disposable.None
+      }
     );
 
     // 初始加载时发送文件系统数据
     if (this._view) {
       this._getWorkspaceFiles(this._view.webview);
     }
+  }
+
+  // 获取VSCode主题颜色并发送到webview
+  private _sendThemeColors(webview: vscode.Webview) {
+    const themeColors = {
+      // 背景颜色
+      background: this._getColor('editor.background'),
+      // 节点颜色
+      fileNodeBg: this._getColor('editorGroup.dropBackground', '#e3f2fd'),
+      fileNodeBorder: this._getColor('statusBarItem.remoteBackground', '#42a5f5'),
+      dirNodeBg: this._getColor('activityBar.dropBackground', '#e8f5e9'),
+      dirNodeBorder: this._getColor('statusBar.background', '#66bb6a'),
+      // 文本颜色
+      foreground: this._getColor('editor.foreground'),
+      // 连接线颜色
+      lineColor: this._getColor('editorIndentGuide.background', '#ccc'),
+      // 高亮颜色
+      hoverBackground: this._getColor('list.hoverBackground'),
+      // 阴影颜色
+      shadow: this._getColor('widget.shadow', 'rgba(0,0,0,0.2)'),
+    };
+
+    webview.postMessage({ 
+      command: 'themeColors', 
+      colors: themeColors 
+    });
+  }
+
+  // 获取主题颜色，带默认值
+  private _getColor(colorId: string, defaultColor: string = '#ffffff'): string {
+    const color = vscode.window.activeColorTheme.getColor(colorId);
+    if (color) {
+      return color.toString();
+    }
+    return defaultColor;
   }
 
   // 获取工作区文件并发送到webview
@@ -84,6 +120,9 @@ class FreeNavViewProvider implements vscode.WebviewViewProvider {
         command: 'fileSystemData', 
         data: fileStructure 
       });
+
+      // 发送主题颜色
+      this._sendThemeColors(webview);
     } catch (error) {
       console.error('获取文件系统数据失败:', error);
       webview.postMessage({ 
@@ -134,7 +173,7 @@ class FreeNavViewProvider implements vscode.WebviewViewProvider {
       vscode.Uri.joinPath(this._extensionUri, 'dist', 'webview.js')
     );
 
-    // 添加ReactFlow CSS
+    // 添加样式
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'dist', 'style.css')
     );
@@ -158,19 +197,6 @@ class FreeNavViewProvider implements vscode.WebviewViewProvider {
           #root {
             width: 100%;
             height: 100%;
-          }
-          .react-flow__node {
-            width: auto;
-            border-radius: 5px;
-            padding: 10px;
-            background: #fff;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.15);
-          }
-          .file-node {
-            border-left: 4px solid #42a5f5;
-          }
-          .directory-node {
-            border-left: 4px solid #66bb6a;
           }
         </style>
       </head>
