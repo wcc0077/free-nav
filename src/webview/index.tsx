@@ -1,6 +1,10 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom/client';
 
+//=============================================================================
+// 类型定义
+//=============================================================================
+
 // VS Code API 类型定义
 declare global {
   interface Window {
@@ -66,25 +70,15 @@ interface Edge {
   targetId: string;
 }
 
-// 文件系统节点组件Props
-interface FileSystemNodeProps {
-  item: FileSystemItem;
-  level: number;
-  onSelect: (id: string) => void;
-  isSelected: boolean;
-  colors: ThemeColors;
-  nodeRef: React.RefObject<HTMLDivElement>;
-  parentId?: string;
-  expanded: Set<string>;
-  toggleExpand: (id: string) => void;
-  children?: React.ReactNode; // 添加children属性
-}
+//=============================================================================
+// 自定义钩子函数
+//=============================================================================
 
 // 计算连接线的钩子
 function useNodeConnections(
   files: FileSystemItem[], 
   expanded: Set<string>
-) {
+): Edge[] {
   const [connections, setConnections] = React.useState<Edge[]>([]);
   
   React.useEffect(() => {
@@ -115,7 +109,7 @@ function useNodeConnections(
 }
 
 // 节点位置钩子 - 从DOM获取实际节点位置
-function useNodePositions(nodeRefs: React.MutableRefObject<{[id: string]: React.RefObject<HTMLDivElement>}>) {
+function useNodePositions(nodeRefs: React.MutableRefObject<{[id: string]: React.RefObject<HTMLDivElement>}>): Map<string, NodePosition> {
   const [positions, setPositions] = React.useState<Map<string, NodePosition>>(new Map());
   
   const updatePositions = React.useCallback(() => {
@@ -141,7 +135,10 @@ function useNodePositions(nodeRefs: React.MutableRefObject<{[id: string]: React.
   
   // 添加resize观察器，当窗口大小变化时更新位置
   React.useEffect(() => {
-    updatePositions();
+    // 延迟执行以确保DOM已完全渲染
+    const timeoutId = setTimeout(() => {
+      updatePositions();
+    }, 100);
     
     const observer = new ResizeObserver(() => {
       updatePositions();
@@ -154,7 +151,12 @@ function useNodePositions(nodeRefs: React.MutableRefObject<{[id: string]: React.
     
     window.addEventListener('resize', updatePositions);
     
+    // 定期更新位置，以防DOM变化但没有触发resize事件
+    const intervalId = setInterval(updatePositions, 1000);
+    
     return () => {
+      clearTimeout(timeoutId);
+      clearInterval(intervalId);
       observer.disconnect();
       window.removeEventListener('resize', updatePositions);
     };
@@ -163,30 +165,193 @@ function useNodePositions(nodeRefs: React.MutableRefObject<{[id: string]: React.
   return positions;
 }
 
+// 拖拽和缩放功能钩子
+function useDragAndZoom() {
+  const [position, setPosition] = React.useState({ x: 0, y: 0 });
+  const [scale, setScale] = React.useState(1);
+  const [isDragging, setIsDragging] = React.useState(false);
+  const [startPos, setStartPos] = React.useState({ x: 0, y: 0 });
+  const lastClickTime = React.useRef<number>(0);
+  const dragThreshold = 5; // 像素
+  const dragStartPos = React.useRef<{x: number, y: number} | null>(null);
+  
+  const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
+    // 保存拖拽开始位置
+    dragStartPos.current = { x: e.clientX, y: e.clientY };
+    
+    // 如果是点击文件或文件夹节点，不启动拖拽
+    const target = e.target as HTMLElement;
+    if (target.closest('.file-node') || target.closest('.directory-node')) {
+      return;
+    }
+    
+    setIsDragging(true);
+    setStartPos({ x: e.clientX - position.x, y: e.clientY - position.y });
+    e.preventDefault();
+  }, [position]);
+  
+  const handleMouseMove = React.useCallback((e: React.MouseEvent) => {
+    if (!isDragging && dragStartPos.current) {
+      // 检查是否超过拖拽阈值
+      const dx = Math.abs(e.clientX - dragStartPos.current.x);
+      const dy = Math.abs(e.clientY - dragStartPos.current.y);
+      
+      if (dx > dragThreshold || dy > dragThreshold) {
+        setIsDragging(true);
+        setStartPos({ x: e.clientX - position.x, y: e.clientY - position.y });
+      }
+      return;
+    }
+    
+    if (isDragging) {
+      setPosition({
+        x: e.clientX - startPos.x,
+        y: e.clientY - startPos.y
+      });
+      e.preventDefault();
+    }
+  }, [isDragging, position, startPos]);
+  
+  const handleMouseUp = React.useCallback((e: React.MouseEvent) => {
+    setIsDragging(false);
+    dragStartPos.current = null;
+    
+    // 检测是否是点击而不是拖拽
+    const now = Date.now();
+    if (now - lastClickTime.current < 300) {
+      // 双击，将视图重置到中心
+      setPosition({ x: 0, y: 0 });
+      setScale(1);
+    }
+    lastClickTime.current = now;
+  }, []);
+  
+  const handleWheel = React.useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    
+    // 计算缩放因子 (0.1 = 10% 缩放)
+    const zoomFactor = 0.1;
+    const delta = e.deltaY < 0 ? zoomFactor : -zoomFactor;
+    const newScale = Math.max(0.5, Math.min(2, scale + delta));
+    
+    // 更新缩放级别
+    setScale(newScale);
+    
+    // 调整位置以保持鼠标位置不变
+    const mouseX = e.clientX;
+    const mouseY = e.clientY;
+    
+    // 计算鼠标相对于当前变换原点的位置
+    const containerEl = document.getElementById('root');
+    const rect = containerEl?.getBoundingClientRect() || { left: 0, top: 0, width: 0, height: 0 };
+    const originX = rect.left + position.x;
+    const originY = rect.top + position.y;
+    
+    // 计算鼠标相对于原点的偏移
+    const mouseOffsetX = mouseX - originX;
+    const mouseOffsetY = mouseY - originY;
+    
+    // 计算新位置以保持鼠标位置不变
+    const scaleFactor = newScale / scale;
+    const newPosition = {
+      x: position.x - mouseOffsetX * (scaleFactor - 1),
+      y: position.y - mouseOffsetY * (scaleFactor - 1)
+    };
+    
+    setPosition(newPosition);
+  }, [scale, position]);
+  
+  return {
+    position,
+    scale,
+    isDragging,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+    handleWheel
+  };
+}
+
+// 使用主题和消息通信钩子
+function useVSCodeThemeAndMessages() {
+  const [files, setFiles] = React.useState<FileSystemItem[]>([]);
+  const [themeColors, setThemeColors] = React.useState<ThemeColors>(defaultColors);
+  const [loading, setLoading] = React.useState(true);
+  
+  // 监听VSCode消息
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+      console.log('收到消息:', message);
+      
+      switch (message.command) {
+        case 'fileSystemData':
+          console.log('设置文件系统数据', message.data);
+          setFiles(message.data);
+          setLoading(false);
+          break;
+        case 'themeColors':
+          console.log('应用主题颜色', message.data);
+          setThemeColors(message.data);
+          break;
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // 请求文件系统数据
+    vscode.postMessage({
+      command: 'getWorkspaceFiles'
+    });
+    
+    // 请求主题颜色
+    vscode.postMessage({
+      command: 'getThemeColors'
+    });
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, []);
+  
+  return { files, themeColors, loading };
+}
+
+//=============================================================================
+// UI组件
+//=============================================================================
+
+// 文件节点组件Props
+interface FileNodeProps {
+  item: FileSystemItem;
+  onSelect: (id: string) => void;
+  isSelected: boolean;
+  colors: ThemeColors;
+  nodeRef: React.RefObject<HTMLDivElement>;
+}
+
 // 文件节点组件
-const FileNode: React.FC<FileSystemNodeProps> = ({ 
+const FileNode: React.FC<FileNodeProps> = React.memo(({ 
   item, 
   onSelect, 
   isSelected,
   colors,
-  nodeRef,
-  expanded,
-  toggleExpand
+  nodeRef
 }) => {
-  const handleClick = () => {
+  const handleClick = React.useCallback(() => {
     onSelect(item.id);
     vscode.postMessage({
       command: 'openFile',
       path: item.path
     });
-  };
+  }, [item.id, item.path, onSelect]);
 
   return (
     <div 
       ref={nodeRef}
       className={`file-node ${isSelected ? 'selected' : ''}`}
       style={{ 
-        padding: '3px 6px',
+        padding: '6px 10px',  // 增加内边距
         cursor: 'pointer',
         borderLeft: `2px solid ${colors.fileNodeBorder}`,
         backgroundColor: isSelected ? colors.hoverBackground : colors.fileNodeBg,
@@ -195,54 +360,66 @@ const FileNode: React.FC<FileSystemNodeProps> = ({
         transition: 'all 0.2s',
         boxShadow: isSelected ? `0 1px 3px ${colors.shadow}` : 'none',
         color: colors.foreground,
-        margin: '2px 0',
+        margin: '4px 0',  // 增加外边距
         display: 'inline-block',
-        maxWidth: '200px',
+        minWidth: '100px',  // 设置最小宽度
+        maxWidth: '250px',  // 增加最大宽度
         wordBreak: 'break-word',
+        userSelect: 'none',  // 防止文本选择
       }}
       onClick={handleClick}
       data-id={item.id}
       data-type="file"
     >
       <div style={{ display: 'flex', alignItems: 'center' }}>
-        <span style={{ marginRight: '4px', fontSize: '12px' }}>📄</span>
+        <span style={{ marginRight: '8px', fontSize: '14px' }}>📄</span>
         <span style={{ fontSize: '12px' }}>{item.name}</span>
       </div>
     </div>
   );
-};
+});
+
+// 目录节点组件Props
+interface DirectoryNodeProps {
+  item: FileSystemItem;
+  onSelect: (id: string) => void;
+  isSelected: boolean;
+  colors: ThemeColors;
+  nodeRef: React.RefObject<HTMLDivElement>;
+  expanded: Set<string>;
+  toggleExpand: (id: string) => void;
+  children?: React.ReactNode;
+}
 
 // 目录节点组件
-const DirectoryNode: React.FC<FileSystemNodeProps> = ({ 
+const DirectoryNode: React.FC<DirectoryNodeProps> = React.memo(({ 
   item, 
-  level, 
   onSelect, 
   isSelected,
   colors,
   nodeRef,
-  parentId,
   children,
   expanded,
   toggleExpand
 }) => {
   const isOpen = expanded.has(item.id);
   
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = React.useCallback((e: React.MouseEvent) => {
     onSelect(item.id);
-  };
+  }, [item.id, onSelect]);
   
-  const handleToggle = (e: React.MouseEvent) => {
+  const handleToggle = React.useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     toggleExpand(item.id);
-  };
+  }, [item.id, toggleExpand]);
 
   return (
-    <div className="directory-container" data-parent-id={parentId} data-id={item.id}>
+    <div className="directory-container" data-id={item.id}>
       <div 
         ref={nodeRef}
         className={`directory-node ${isSelected ? 'selected' : ''}`}
         style={{ 
-          padding: '3px 6px',
+          padding: '6px 10px',  // 增加内边距
           cursor: 'pointer',
           borderLeft: `2px solid ${colors.dirNodeBorder}`,
           backgroundColor: isSelected ? colors.hoverBackground : colors.dirNodeBg,
@@ -251,10 +428,12 @@ const DirectoryNode: React.FC<FileSystemNodeProps> = ({
           transition: 'all 0.2s',
           boxShadow: isSelected ? `0 1px 3px ${colors.shadow}` : 'none',
           color: colors.foreground,
-          margin: '2px 0',
+          margin: '4px 0',  // 增加外边距
           display: 'inline-block',
-          maxWidth: '200px',
+          minWidth: '100px',  // 设置最小宽度
+          maxWidth: '250px',  // 增加最大宽度
           wordBreak: 'break-word',
+          userSelect: 'none',  // 防止文本选择
         }}
         onClick={handleClick}
         data-id={item.id}
@@ -262,7 +441,7 @@ const DirectoryNode: React.FC<FileSystemNodeProps> = ({
       >
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <span 
-            style={{ marginRight: '4px', fontSize: '12px', cursor: 'pointer' }}
+            style={{ marginRight: '8px', fontSize: '14px', cursor: 'pointer' }}
             onClick={handleToggle}
           >
             {isOpen ? '📂' : '📁'}
@@ -274,10 +453,10 @@ const DirectoryNode: React.FC<FileSystemNodeProps> = ({
       {children}
     </div>
   );
-};
+});
 
 // 递归渲染文件系统树
-const FileSystemTree: React.FC<{
+interface FileSystemTreeProps {
   items: FileSystemItem[];
   level: number;
   onSelect: (id: string) => void;
@@ -287,7 +466,9 @@ const FileSystemTree: React.FC<{
   parentId?: string;
   expanded: Set<string>;
   toggleExpand: (id: string) => void;
-}> = ({
+}
+
+const FileSystemTree: React.FC<FileSystemTreeProps> = React.memo(({
   items,
   level,
   onSelect,
@@ -299,29 +480,31 @@ const FileSystemTree: React.FC<{
   toggleExpand
 }) => {
   // 创建或获取节点引用
-  const getNodeRef = (id: string) => {
+  const getNodeRef = React.useCallback((id: string) => {
     if (!nodeRefs.current[id]) {
       nodeRefs.current[id] = React.createRef<HTMLDivElement>();
     }
     return nodeRefs.current[id];
-  };
+  }, [nodeRefs]);
+  
+  if (!items || items.length === 0) {
+    return null;
+  }
   
   return (
-    <div className="tree-level" style={{ marginLeft: level > 0 ? '20px' : '0' }}>
+    <div className="tree-level" style={{ 
+      marginLeft: level > 0 ? '20px' : '0',
+    }}>
       {items.map(item => {
         if (item.type === 'file') {
           return (
-            <div key={item.id} className="node-wrapper" style={{ marginBottom: '4px' }}>
+            <div key={item.id} className="node-wrapper" style={{ marginBottom: '6px' }}>
               <FileNode
                 item={item}
-                level={level}
                 onSelect={onSelect}
                 isSelected={selected === item.id}
                 colors={colors}
                 nodeRef={getNodeRef(item.id)}
-                parentId={parentId}
-                expanded={expanded}
-                toggleExpand={toggleExpand}
               />
             </div>
           );
@@ -331,12 +514,10 @@ const FileSystemTree: React.FC<{
             <div key={item.id} className="node-wrapper" style={{ marginBottom: '8px' }}>
               <DirectoryNode
                 item={item}
-                level={level}
                 onSelect={onSelect}
                 isSelected={selected === item.id}
                 colors={colors}
                 nodeRef={getNodeRef(item.id)}
-                parentId={parentId}
                 expanded={expanded}
                 toggleExpand={toggleExpand}
               >
@@ -360,22 +541,24 @@ const FileSystemTree: React.FC<{
       })}
     </div>
   );
-};
+});
 
 // 连接线组件
-const Connections: React.FC<{
+interface ConnectionsProps {
   connections: Edge[];
   nodePositions: Map<string, NodePosition>;
   colors: ThemeColors;
-}> = ({ connections, nodePositions, colors }) => {
+}
+
+const Connections: React.FC<ConnectionsProps> = React.memo(({ connections, nodePositions, colors }) => {
   if (connections.length === 0 || nodePositions.size === 0) {
     return null;
   }
 
   // 计算SVG的尺寸
   const positions = Array.from(nodePositions.values());
-  const maxX = Math.max(...positions.map(p => p.x + p.width)) + 50;
-  const maxY = Math.max(...positions.map(p => p.y + p.height)) + 50;
+  const maxX = Math.max(...positions.map(p => p.x + p.width)) + 100;
+  const maxY = Math.max(...positions.map(p => p.y + p.height)) + 100;
   
   return (
     <svg
@@ -390,6 +573,7 @@ const Connections: React.FC<{
       }}
       width={maxX}
       height={maxY}
+      data-testid="connections-svg"
     >
       {connections.map(conn => {
         const source = nodePositions.get(conn.sourceId);
@@ -419,55 +603,49 @@ const Connections: React.FC<{
       })}
     </svg>
   );
-};
+});
 
-// 拖拽容器
-const ZoomablePanContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [position, setPosition] = React.useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = React.useState(false);
-  const [startPos, setStartPos] = React.useState({ x: 0, y: 0 });
-  
-  const handleMouseDown = (e: React.MouseEvent) => {
-    // 只有在点击容器背景时才开始拖拽
-    if ((e.target as HTMLElement).classList.contains('drag-container')) {
-      setIsDragging(true);
-      setStartPos({ x: e.clientX - position.x, y: e.clientY - position.y });
-    }
-  };
-  
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
-      setPosition({
-        x: e.clientX - startPos.x,
-        y: e.clientY - startPos.y
-      });
-    }
-  };
-  
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
+// 拖拽和缩放容器
+interface CanvasProps {
+  children: React.ReactNode;
+  colors: ThemeColors;
+}
+
+const Canvas: React.FC<CanvasProps> = React.memo(({ children, colors }) => {
+  const {
+    position,
+    scale,
+    isDragging,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+    handleWheel
+  } = useDragAndZoom();
   
   return (
     <div 
-      className="drag-container"
+      className="canvas-container"
       style={{
         position: 'relative',
         overflow: 'hidden',
         width: '100%',
         height: '100vh',
         cursor: isDragging ? 'grabbing' : 'grab',
-        backgroundColor: 'transparent'
+        backgroundColor: colors.background,
+        userSelect: 'none'
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onWheel={handleWheel}
     >
       <div
+        className="canvas-content"
         style={{
           position: 'absolute',
-          transform: `translate(${position.x}px, ${position.y}px)`,
+          transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+          transformOrigin: '0 0',
           transition: isDragging ? 'none' : 'transform 0.1s ease',
           padding: '20px'
         }}
@@ -476,27 +654,113 @@ const ZoomablePanContainer: React.FC<{ children: React.ReactNode }> = ({ childre
       </div>
     </div>
   );
-};
+});
+
+// 信息提示面板
+interface InfoPanelProps {
+  colors: ThemeColors;
+}
+
+const InfoPanel: React.FC<InfoPanelProps> = React.memo(({ colors }) => {
+  return (
+    <div style={{ 
+      position: 'absolute', 
+      top: '10px', 
+      right: '10px', 
+      zIndex: 1000,
+      background: colors.background,
+      padding: '10px',
+      borderRadius: '4px',
+      boxShadow: `0 2px 8px ${colors.shadow}`,
+      fontSize: '12px',
+      opacity: 0.9,
+      minWidth: '180px'
+    }}>
+      <p style={{ margin: '0 0 8px 0', fontWeight: 'bold' }}>
+        文件系统导航
+      </p>
+      <p style={{ margin: '0 0 5px 0', display: 'flex', alignItems: 'center' }}>
+        <span style={{ color: colors.fileNodeBorder, fontWeight: 'bold', marginRight: '8px' }}>📄</span>
+        <span>点击文件打开</span>
+      </p>
+      <p style={{ margin: '0 0 5px 0', display: 'flex', alignItems: 'center' }}>
+        <span style={{ color: colors.dirNodeBorder, fontWeight: 'bold', marginRight: '8px' }}>📁</span>
+        <span>点击图标展开文件夹</span>
+      </p>
+      <p style={{ margin: '8px 0 0 0', fontSize: '11px', color: `${colors.foreground}99` }}>
+        拖动画布移动 · 滚轮缩放 · 双击重置
+      </p>
+    </div>
+  );
+});
+
+// 加载指示器
+interface LoaderProps {
+  colors: ThemeColors;
+}
+
+const Loader: React.FC<LoaderProps> = React.memo(({ colors }) => {
+  return (
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'column',
+      justifyContent: 'center', 
+      alignItems: 'center', 
+      height: '100vh',
+      color: colors.foreground,
+      backgroundColor: colors.background
+    }}>
+      <div style={{
+        width: '40px',
+        height: '40px',
+        border: `3px solid ${colors.lineColor}`,
+        borderTop: `3px solid ${colors.fileNodeBorder}`,
+        borderRadius: '50%',
+        animation: 'spin 1s linear infinite',
+        marginBottom: '16px'
+      }} />
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
+      <p>加载文件系统...</p>
+    </div>
+  );
+});
+
+//=============================================================================
+// 主应用组件
+//=============================================================================
 
 // 主App组件
 const App: React.FC = () => {
-  const [files, setFiles] = React.useState<FileSystemItem[]>([]);
-  const [themeColors, setThemeColors] = React.useState<ThemeColors>(defaultColors);
-  const [loading, setLoading] = React.useState(true);
+  // 使用钩子获取文件和主题数据
+  const { files, themeColors, loading } = useVSCodeThemeAndMessages();
+  
+  // 状态管理
   const [selected, setSelected] = React.useState<string | null>(null);
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const nodeRefs = React.useRef<{[id: string]: React.RefObject<HTMLDivElement>}>({});
   
   // 切换展开/折叠状态
-  const toggleExpand = (id: string) => {
-    const newExpanded = new Set(expanded);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
-    }
-    setExpanded(newExpanded);
-  };
+  const toggleExpand = React.useCallback((id: string) => {
+    setExpanded(prev => {
+      const newExpanded = new Set(prev);
+      if (newExpanded.has(id)) {
+        newExpanded.delete(id);
+      } else {
+        newExpanded.add(id);
+      }
+      return newExpanded;
+    });
+  }, []);
+  
+  // 处理节点选择
+  const handleSelect = React.useCallback((id: string) => {
+    setSelected(id);
+  }, []);
   
   // 计算节点连接线
   const connections = useNodeConnections(files, expanded);
@@ -504,52 +768,35 @@ const App: React.FC = () => {
   // 计算节点位置
   const nodePositions = useNodePositions(nodeRefs);
 
-  // 监听VSCode消息
+  // 使用错误边界处理渲染错误
+  const [hasError, setHasError] = React.useState(false);
+  
   React.useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const message = event.data;
-      
-      switch (message.command) {
-        case 'fileSystemData':
-          setFiles(message.data);
-          setLoading(false);
-          break;
-        case 'themeColors':
-          setThemeColors(message.data);
-          break;
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-
-    // 请求文件系统数据
-    vscode.postMessage({
-      command: 'getWorkspaceFiles'
+    window.addEventListener('error', () => {
+      setHasError(true);
     });
     
-    // 请求主题颜色
-    vscode.postMessage({
-      command: 'getThemeColors'
-    });
-
     return () => {
-      window.removeEventListener('message', handleMessage);
+      window.removeEventListener('error', () => {
+        setHasError(true);
+      });
     };
   }, []);
 
-  if (loading) {
+  if (hasError) {
     return (
       <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh',
-        color: themeColors.foreground,
-        backgroundColor: themeColors.background
+        padding: '20px', 
+        color: 'red', 
+        backgroundColor: themeColors.background 
       }}>
-        <p>加载文件系统...</p>
+        渲染出错。请刷新页面重试。
       </div>
     );
+  }
+
+  if (loading) {
+    return <Loader colors={themeColors} />;
   }
 
   return (
@@ -557,34 +804,13 @@ const App: React.FC = () => {
       width: '100%', 
       height: '100vh',
       backgroundColor: themeColors.background,
-      color: themeColors.foreground
+      color: themeColors.foreground,
+      overflow: 'hidden',
+      position: 'relative'
     }}>
-      <div style={{ 
-        position: 'absolute', 
-        top: '10px', 
-        right: '10px', 
-        zIndex: 1000,
-        background: themeColors.background,
-        padding: '8px',
-        borderRadius: '4px',
-        boxShadow: `0 2px 5px ${themeColors.shadow}`,
-        fontSize: '12px',
-        opacity: 0.9
-      }}>
-        <p style={{ margin: '0 0 5px 0' }}>
-          <span style={{ color: themeColors.fileNodeBorder, fontWeight: 'bold' }}>📄 文件</span>
-          <span style={{ marginLeft: '10px' }}>点击打开</span>
-        </p>
-        <p style={{ margin: '0' }}>
-          <span style={{ color: themeColors.dirNodeBorder, fontWeight: 'bold' }}>📁 文件夹</span>
-          <span style={{ marginLeft: '10px' }}>点击展开</span>
-        </p>
-        <p style={{ margin: '5px 0 0 0', fontSize: '10px', color: themeColors.foreground }}>
-          按住鼠标拖动整个视图
-        </p>
-      </div>
+      <InfoPanel colors={themeColors} />
       
-      <ZoomablePanContainer>
+      <Canvas colors={themeColors}>
         <Connections 
           connections={connections} 
           nodePositions={nodePositions} 
@@ -594,20 +820,54 @@ const App: React.FC = () => {
         <FileSystemTree
           items={files}
           level={0}
-          onSelect={setSelected}
+          onSelect={handleSelect}
           selected={selected}
           colors={themeColors}
           nodeRefs={nodeRefs}
           expanded={expanded}
           toggleExpand={toggleExpand}
         />
-      </ZoomablePanContainer>
+      </Canvas>
     </div>
   );
 };
 
+//=============================================================================
+// 应用渲染
+//=============================================================================
+
+// 错误边界组件
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode, fallback: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode, fallback: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('组件渲染错误:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
 // 使用React 18 API渲染
 const root = document.getElementById('root');
 if (root) {
-  ReactDOM.createRoot(root).render(<App />);
+  ReactDOM.createRoot(root).render(
+    <ErrorBoundary fallback={<div style={{padding: '20px', color: 'red'}}>渲染出错，请刷新页面</div>}>
+      <App />
+    </ErrorBoundary>
+  );
 }
