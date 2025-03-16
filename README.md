@@ -1,6 +1,6 @@
 # free-nav README
 
-This is the README for your extension "free-nav". After writing up a brief description, we recommend including the following sections.
+tied of the old school classic file explorer? try this free file navigator
 
 ## Features
 

@@ -1,9 +1,9 @@
 {
   "name": "free-nav",
   "displayName": "Free Nav",
-  "description": "VSCode侧边栏Hello World示例",
-  "publisher": "wcc007",
-  "version": "0.0.1",
+  "description": "侧边栏资源管理器自由导航",
+  "publisher": "unidt",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -44,19 +44,19 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "vsce package",
-    "postinstall": "cd node_modules/@xyflow/react && npm install --no-save"
+    "publish": "pnpm vsce publish --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^16.0.0",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "@types/vscode": "^1.80.0",
     "esbuild": "^0.18.0",
     "typescript": "^5.1.0"
   },
   "dependencies": {
     "@xyflow/react": "^12.0.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react": "^19",
+    "react-dom": "^19"
   }
 }
